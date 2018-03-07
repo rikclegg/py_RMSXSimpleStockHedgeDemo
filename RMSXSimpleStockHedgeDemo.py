@@ -251,19 +251,24 @@ class RMSXSimpleStockHedgeDemo:
     class EMSXFieldDataPointSource(DataPointSource):
 
         def __init__(self, field):
-            #print("Initializing EMSXFieldDataPointSource for field: " + field.name())
             self.source = field
-            field.add_notification_handler(self.process_notification)
+            self.value = self.source.value()
+            self.previous_value = None
+            self.source.add_notification_handler(self.process_notification)
             
         def get_value(self):
-            #print("GetValue of EMSXFieldDataPointSource for field: " + self.source.name())
-            return self.source.value()
+            return self.value
+        
+        def get_previous_value(self):
+            return self.previous_value
         
         def process_notification(self, notification):
             print("process_notification of EMSXFieldDataPointSource for field: " + self.source.name() +"(" + notification.source.field("EMSX_SEQUENCE").value() + ")" )
             for fc in notification.field_changes:
                 print ("    >> " + fc.field.name() + ": " + fc.old_value + " / " + fc.new_value)
-                
+
+            self.previous_value = self.value
+            self.value = notification.field_changes[0].new_value                
             super().set_stale()
      
 
@@ -275,16 +280,23 @@ class RMSXSimpleStockHedgeDemo:
         
         def evaluate(self,dataset):
 
-            filled =  int(dataset.datapoints["RouteFilled"].get_value())
-            last_shares = int(dataset.datapoints["RouteLastShares"].get_value())
-            remain = int(dataset.datapoints["RouteAmount"].get_value()) - filled
+            field_source = dataset.datapoints["RouteFilled"].datapoint_source
             
-            if last_shares > 0 and remain > 0:
-                dataset.datapoints["FillAmount"].datapoint_source.set_value(last_shares)
-                print("Fill detected: " + str(last_shares))
+            current_filled =  int(field_source.get_value())
+            
+            pf = field_source.get_previous_value()
+            if not pf is None:
+                previous_filled =  int(pf)
+            else:
+                previous_filled = 0
+            
+            if current_filled > previous_filled:
+                filled_amount = current_filled - previous_filled
+                dataset.datapoints["FillAmount"].datapoint_source.set_value(filled_amount)
+                print("Fill detected: " + str(filled_amount))
                 return True
             else:
-                print("No Fill detected (Filled: %d  Shares: %d)" % (filled, last_shares))
+                print("No Fill detected (Current: %d  Previous: %d)" % (current_filled, previous_filled))
                 return False
             
 
