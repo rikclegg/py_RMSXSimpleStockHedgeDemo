@@ -6,7 +6,6 @@ import argparse
 from easymsx.easymsx import EasyMSX
 from easymsx.notification import Notification as EasyMSXNotification
 from easymkt.easymkt import EasyMKT
-from easymkt.notification import Notification as EasyMKTNotification
 from rulemsx.rulemsx import RuleMSX
 from rulemsx.ruleevaluator import RuleEvaluator
 from rulemsx.action import Action
@@ -17,8 +16,8 @@ def parseCommandLine():
     
     parser = argparse.ArgumentParser(description="Bloomberg - RMSX Example - RMSXSimpleStockHedgeDemo")
     
-    parser.add_argument('-t', '--threshold', help='The trigger threshold percentage of 30 Average Daily Volume', action='store', required=True)
-    parser.add_argument('-h', '--hedge', help='The hedge ticker to use', action='store', required=True)
+    parser.add_argument('-p', '--percentage', help='The trigger threshold percentage of 30 Average Daily Volume', action='store', required=True)
+    parser.add_argument('-t', '--ticker', help='The hedge ticker to use', action='store', required=True)
    
     options = parser.parse_args()
     
@@ -30,14 +29,11 @@ class RMSXSimpleStockHedgeDemo:
     def __init__(self, options):
 
         self.options = options
+        self.easymsx = None
         
         print("Initialising RuleMSX...")
         self.rulemsx = RuleMSX(logging.CRITICAL)
         print("RuleMSX initialised...")
-        
-        print("Create RuleSet...")
-        self.build_rules()
-        print("RuleSet ready...")
         
         print("Initialising EasyMKT...")
         self.easymkt = EasyMKT()
@@ -47,11 +43,15 @@ class RMSXSimpleStockHedgeDemo:
         self.easymsx = EasyMSX()
         print("EasyMSX initialised...")
         
+        print("Create RuleSet...")
+        self.build_rules()
+        print("RuleSet ready...")
+
         self.easymsx.orders.add_notification_handler(self.process_notification)
         self.easymsx.routes.add_notification_handler(self.process_notification)
 
         self.easymsx.start()
-             
+
     class StringEqualityEvaluator(RuleEvaluator):
         
         def __init__(self, datapoint_name, target_value, additional_dep=None):
@@ -86,7 +86,7 @@ class RMSXSimpleStockHedgeDemo:
             #print("Initialized StringEqualityEvaluator for DataPoint: " + datapoint_name)
         
         def evaluate(self,dataset):
-            dp_value = dataset.datapoints[self.datapoint_name].get_value()
+            dp_value = dataset.datapoints[self.datapoint_name].get_value()[:len(self.target_value)]
             #print("Evaluated StringEqualityEvaluator for DataPoint: " + self.datapoint_name + " of DataSet: " + dataset.name + " - Returning: " + str(dp_value==self.target_value))
             return dp_value!=self.target_value
 
@@ -98,10 +98,14 @@ class RMSXSimpleStockHedgeDemo:
             super().add_dependent_datapoint_name("OrderAmount")
         
         def evaluate(self,dataset):
-            order_amount = dataset.datapoints["OrderAmount"].get_value()
-            trigger_threshold = dataset.datapoints["TriggerThreshold"].get_value()
-            avg_vol = dataset.datapoints["20DayAvgVol"].get_value()
+            order_amount = float(dataset.datapoints["OrderAmount"].get_value())
+            trigger_threshold = float(dataset.datapoints["TriggerThreshold"].get_value())
+            avg_vol = float(dataset.datapoints["20DayAvgVol"].get_value())
             
+            #print("Order Amount: " + order_amount)
+            #print("Trigger Threshold: " + trigger_threshold)
+            #print("Average Volume: %f" %(avg_vol))
+
             return order_amount < (trigger_threshold * avg_vol)
 
 
@@ -116,31 +120,27 @@ class RMSXSimpleStockHedgeDemo:
         
         def execute(self,dataset):
             
-            req = self.easymsx.emsx_service.createRequest("RouteEx")
+            req = self.easymsx.create_request("RouteEx")
             
-            req.set("EMSX_SEQUENCE", dataset.datapoints["OrderNumber"].get_value())
-            req.set("EMSX_AMOUNT", dataset.datapoints["OrderNumber"].get_value())
+            ord_no = dataset.datapoints["OrderNumber"].get_value()
+            req.set("EMSX_SEQUENCE", ord_no)
+            req.set("EMSX_AMOUNT", dataset.datapoints["OrderAmount"].get_value())
             req.set("EMSX_BROKER", "BB")
             req.set("EMSX_HAND_INSTRUCTION", "ANY")
             req.set("EMSX_ORDER_TYPE", "MKT")
             req.set("EMSX_TICKER", dataset.datapoints["OrderTicker"].get_value())
             req.set("EMSX_TIF", "DAY")
 
-            self.easymsx.submit_request(req, self.processResponse)
+            msg = self.easymsx.send_request(req)
             
-            #wait for response
-            while(not self.done):
-                pass
-            
-        def processResponse(self, msg):
-        
-            if msg.messageType() == "ErrorInfo":
+            if msg.messageType()=="ErrorInfo":
+                print("Failed to route order: " + ord_no)
                 errorCode = msg.getElementAsInteger("ERROR_CODE")
                 errorMessage = msg.getElementAsString("ERROR_MESSAGE")
-                print("Route request error >> ERROR CODE: %d\tERROR MESSAGE: %s" % (errorCode,errorMessage))
-
-            self.done=True
-
+                print ("ERROR CODE: %d\tERROR MESSAGE: %s" % (errorCode,errorMessage))
+            else:
+                print("Created route for order: " + ord_no)
+                
 
     class SendNewRouteBMTB(Action):
         
@@ -153,10 +153,12 @@ class RMSXSimpleStockHedgeDemo:
         
         def execute(self,dataset):
             
-            req = self.easymsx.emsx_service.createRequest("RouteEx")
+            req = self.easymsx.create_request("RouteEx")
             
-            req.set("EMSX_SEQUENCE", dataset.datapoints["OrderNumber"].get_value())
-            req.set("EMSX_AMOUNT", dataset.datapoints["OrderNumber"].get_value())
+            ord_no = dataset.datapoints["OrderNumber"].get_value()
+
+            req.set("EMSX_SEQUENCE", ord_no)
+            req.set("EMSX_AMOUNT", dataset.datapoints["OrderAmount"].get_value())
             req.set("EMSX_BROKER", "BMTB")
             req.set("EMSX_HAND_INSTRUCTION", "ANY")
             req.set("EMSX_ORDER_TYPE", "MKT")
@@ -205,42 +207,16 @@ class RMSXSimpleStockHedgeDemo:
             data.appendElement().setElement("EMSX_FIELD_DATA", "")           # Discretion
             indicator.appendElement().setElement("EMSX_FIELD_INDICATOR", 1)
 
-            self.easymsx.submit_request(req, self.processResponse)
+            msg = self.easymsx.send_request(req)
             
-            #wait for response
-            while(not self.done):
-                pass
-            
-        def processResponse(self, msg):
-        
-            if msg.messageType() == "ErrorInfo":
+            if msg.messageType()=="ErrorInfo":
+                print("Failed to route order: " + ord_no)
                 errorCode = msg.getElementAsInteger("ERROR_CODE")
                 errorMessage = msg.getElementAsString("ERROR_MESSAGE")
-                print("Route request error >> ERROR CODE: %d\tERROR MESSAGE: %s" % (errorCode,errorMessage))
-
-            self.done=True
-
-
-    class EMSXFieldDataPointSource(DataPointSource):
-
-        def __init__(self, field):
-            #print("Initializing EMSXFieldDataPointSource for field: " + field.name())
-            self.source = field
-            self.prev = None
-            field.add_notification_handler(self.process_notification)
+                print ("ERROR CODE: %d\tERROR MESSAGE: %s" % (errorCode,errorMessage))
+            else:
+                print("Created route for order: " + ord_no)
             
-        def get_value(self):
-            #print("GetValue of EMSXFieldDataPointSource for field: " + self.source.name())
-            return self.source.value()
-        
-        def get_prev(self):
-            return self.prev
-        
-        def process_notification(self, notification):
-            #print("SetValue of EMSXFieldDataPointSource for field: " + self.source.name())
-            self.prev.set_value(notification.field_changes[0].old_value)
-            super().set_stale()
-    
     class ConstDataPointSource(DataPointSource):
         
         def __init__(self, value):
@@ -257,37 +233,143 @@ class RMSXSimpleStockHedgeDemo:
             self.ticker_source = ticker_source
             self.field = field
             
-            req = self.easymkt.emkt_service.createRequest("RouteEx")
+            req = self.easymkt.create_request("ReferenceDataRequest")
             
-            req.set("EMSX_SEQUENCE", dataset.datapoints["OrderNumber"].get_value())
-            req.set("EMSX_AMOUNT", dataset.datapoints["OrderNumber"].get_value())
-            req.set("EMSX_BROKER", "BMTB")
-            req.set("EMSX_HAND_INSTRUCTION", "ANY")
-            req.set("EMSX_ORDER_TYPE", "MKT")
-            req.set("EMSX_TICKER", dataset.datapoints["OrderTicker"].get_value())
-            req.set("EMSX_TIF", "DAY")
+            req.append("securities", ticker_source)
+            req.append("fields", field)
 
-        def processResponse(self, msg):
+            msg=self.easymkt.send_request(req)
+
+            #print (msg)
+            
+            self.value = msg.getElement("securityData").getValue(0).getElement("fieldData").getElement(field).getValue()
         
-            if msg.messageType() == "ErrorInfo":
-                errorCode = msg.getElementAsInteger("ERROR_CODE")
-                errorMessage = msg.getElementAsString("ERROR_MESSAGE")
-                print("Route request error >> ERROR CODE: %d\tERROR MESSAGE: %s" % (errorCode,errorMessage))
-
-            self.done=True
-
         def get_value(self):
             
             return self.value
     
+    class EMSXFieldDataPointSource(DataPointSource):
+
+        def __init__(self, field):
+            #print("Initializing EMSXFieldDataPointSource for field: " + field.name())
+            self.source = field
+            field.add_notification_handler(self.process_notification)
             
+        def get_value(self):
+            #print("GetValue of EMSXFieldDataPointSource for field: " + self.source.name())
+            return self.source.value()
+        
+        def process_notification(self, notification):
+            print("process_notification of EMSXFieldDataPointSource for field: " + self.source.name() +"(" + notification.source.field("EMSX_SEQUENCE").value() + ")" )
+            for fc in notification.field_changes:
+                print ("    >> " + fc.field.name() + ": " + fc.old_value + " / " + fc.new_value)
+                
+            super().set_stale()
+     
+
+    class RouteFillOccured(RuleEvaluator):
+        
+        def __init__(self):
+            print("Add route fill occured - setting dependency on RouteFilled datapoint")
+            super().add_dependent_datapoint_name("RouteFilled")
+        
+        def evaluate(self,dataset):
+
+            filled =  int(dataset.datapoints["RouteFilled"].get_value())
+            last_shares = int(dataset.datapoints["RouteLastShares"].get_value())
+            remain = int(dataset.datapoints["RouteAmount"].get_value()) - filled
             
+            if last_shares > 0 and remain > 0:
+                dataset.datapoints["FillAmount"].datapoint_source.set_value(last_shares)
+                print("Fill detected: " + str(last_shares))
+                return True
+            else:
+                print("No Fill detected (Filled: %d  Shares: %d)" % (filled, last_shares))
+                return False
+            
+
+    class RouteExchangeUS(RuleEvaluator):
+        
+        def __init__(self,easymsx):
+            self.easymsx = easymsx
+            super().add_dependent_datapoint_name("RouteOrderNumber")
+        
+        def evaluate(self,dataset):
+
+            ord_no = int(dataset.datapoints["RouteOrderNumber"].get_value())
+            print("looking for order: " + str(ord_no))
+            o = self.easymsx.orders.get_by_sequence_no(ord_no)
+            
+            exch=""
+            
+            if not o is None:
+                print("Found order.")
+                exch = o.field("EMSX_EXCHANGE").value()
+            else:
+                print("Failed to find order.")
+
+            print("Evaluating fill route exchange: " + exch + "(returning : " + str(exch=="US") + ")")
+            return exch=="US"
+        
+    class SendHedgeOrder(Action):
+        
+        def __init__(self, easymsx):
+            
+            self.easymsx = easymsx
+            self.done = False
+            
+            pass
+        
+        def execute(self,dataset):
+            
+            ord_no = int(dataset.datapoints["RouteOrderNumber"].get_value())
+            o = self.easymsx.orders.get_by_sequence_no(ord_no)
+
+            req = self.easymsx.create_request("CreateOrderAndRouteEx")
+
+            req.set("EMSX_TICKER", dataset.datapoints["HedgeTicker"].get_value())
+            req.set("EMSX_AMOUNT", dataset.datapoints["HedgeAmount"].get_value())
+            req.set("EMSX_ORDER_TYPE", "MKT")
+            req.set("EMSX_TIF", "DAY")
+            req.set("EMSX_HAND_INSTRUCTION", "ANY")
+            if o.field("EMSX_SIDE").value() == "BUY":
+                req.set("EMSX_SIDE", "SELL")
+            else:
+                req.set("EMSX_SIDE", "BUY")
+            req.set("EMSX_BROKER", "EFIX")
+            req.set("EMSX_NOTES","HEDGE:" + str(ord_no))
+
+            msg = self.easymsx.send_request(req)
+            
+            if msg.messageType()=="ErrorInfo":
+                print("Failed to create hedge order: " + ord_no)
+                errorCode = msg.getElementAsInteger("ERROR_CODE")
+                errorMessage = msg.getElementAsString("ERROR_MESSAGE")
+                print ("ERROR CODE: %d\tERROR MESSAGE: %s" % (errorCode,errorMessage))
+            else:
+                print("Created hedge order for : " + str(ord_no))
+
+            
+    class GenericValueDataPointSource(DataPointSource):
+        
+        def __init__(self, initial_value):
+            self.value = initial_value
+            
+        def get_value(self):
+            return self.value
+        
+        def set_value(self, new_value):
+            self.value = new_value
+            super().set_stale()
+
+
+
     def build_rules(self):
         
         print("Building Rules...")
 
         cond_order_status_new = RuleCondition("OrderStatusIsNew", self.StringEqualityEvaluator("OrderStatus","NEW"))
-        cond_order_not_hedge = RuleCondition("OrderNotHedge", self.StringInequalityEvaluator("Notes","HEDGE"))
+        cond_order_not_hedge = RuleCondition("OrderNotHedge", self.StringInequalityEvaluator("OrderNotes","HEDGE"))
         cond_order_amount_trigger = RuleCondition("OrderAmountTrigger", self.OrderAmountThresholdEvaluator())
         cond_order_exchange_US = RuleCondition("OrderExchangeUS", self.StringEqualityEvaluator("Exchange","US"))
         cond_order_exchange_LN = RuleCondition("OrderExchangeLN", self.StringEqualityEvaluator("Exchange","LN"))
@@ -311,6 +393,21 @@ class RMSXSimpleStockHedgeDemo:
         rule_new_order_LN.add_rule_condition(cond_order_exchange_LN)
         rule_new_order_LN.add_action(action_order_send_new_route_BMTB)
 
+
+        cond_route_fill_occured = RuleCondition("RouteFillOccured", self.RouteFillOccured())
+        cond_route_exchange_US = RuleCondition("RouteExchangeUS", self.RouteExchangeUS(self.easymsx))
+        cond_route_not_hedge = RuleCondition("RouteNotHedge", self.StringInequalityEvaluator("RouteNotes","HEDGE"))
+
+        action_send_hedge_order = self.rulemsx.create_action("SendHedgeOrder", self.SendHedgeOrder(self.easymsx))
+        
+        demo_route_ruleset = self.rulemsx.create_ruleset("demoRouteRuleSet")
+        
+        rule_hedge_order_US = demo_route_ruleset.add_rule("HedgeOrderUS")
+        rule_hedge_order_US.add_rule_condition(cond_route_fill_occured)
+        rule_hedge_order_US.add_rule_condition(cond_route_exchange_US)
+        rule_hedge_order_US.add_rule_condition(cond_route_not_hedge)
+        rule_hedge_order_US.add_action(action_send_hedge_order)
+
         print("Rules built.")
 
 
@@ -321,10 +418,10 @@ class RMSXSimpleStockHedgeDemo:
                 print("EasyMSX Notification ORDER -> NEW/INIT_PAINT: " + notification.source.field("EMSX_SEQUENCE").value())
                 self.parse_order(notification.source)
         
-        #if notification.category == EasyMSXNotification.NotificationCategory.ROUTE:
-        #    if notification.type == EasyMSXNotification.NotificationType.NEW or notification.type == EasyMSXNotification.NotificationType.INITIALPAINT: 
-        #        print("EasyMSX Notification ROUTE -> NEW/INIT_PAINT: " + notification.source.field("EMSX_SEQUENCE").value() + "/" + notification.source.field("EMSX_ROUTE_ID").value())
-        #        self.parse_route(notification.source)
+        if notification.category == EasyMSXNotification.NotificationCategory.ROUTE:
+            if notification.type == EasyMSXNotification.NotificationType.NEW or notification.type == EasyMSXNotification.NotificationType.INITIALPAINT: 
+                print("EasyMSX Notification ROUTE -> NEW/INIT_PAINT: " + notification.source.field("EMSX_SEQUENCE").value() + "/" + notification.source.field("EMSX_ROUTE_ID").value())
+                self.parse_route(notification.source)
             
         
     def parse_order(self,o):
@@ -338,31 +435,32 @@ class RMSXSimpleStockHedgeDemo:
         new_dataset.add_datapoint("OrderNumber", self.EMSXFieldDataPointSource(o.field("EMSX_SEQUENCE")))
         new_dataset.add_datapoint("OrderAmount", self.EMSXFieldDataPointSource(o.field("EMSX_AMOUNT")))
         new_dataset.add_datapoint("OrderNotes", self.EMSXFieldDataPointSource(o.field("EMSX_NOTES")))
-        new_dataset.add_datapoint("TriggerThreshold", self.ConstDataPointSource(self.options.threshold))
-        new_dataset.add_datapoint("HedgeTicker", self.ConstDataPointSource(self.options.hedge))
-        new_dataset.add_datapoint("20DayAvgVol", self.GetRefDataField(self.easymkt, "OrderTicker","VOLUME_AVG_20D"))
-        new_dataset.add_datapoint("Exchange", self.GetRefDataField(self.easymkt, "OrderTicker","EXCH_CODE"))
+        new_dataset.add_datapoint("TriggerThreshold", self.ConstDataPointSource(self.options.percentage))
+        new_dataset.add_datapoint("20DayAvgVol", self.GetRefDataField(self.easymkt, o.field("EMSX_TICKER").value(),"VOLUME_AVG_20D"))
+        new_dataset.add_datapoint("Exchange", self.GetRefDataField(self.easymkt, o.field("EMSX_TICKER").value(),"EXCH_CODE"))
 
         self.rulemsx.rulesets["demoOrderRuleSet"].execute(new_dataset)
 
-        #print("Parse Order: " + o.field("EMSX_SEQUENCE").value()+ "...done.")
 
-    #def parse_route(self,r):
-    #    
-    #    print("Parse Route: " + r.field("EMSX_SEQUENCE").value() + "/" + r.field("EMSX_ROUTE_ID").value())
-    #
-    #    new_dataset = self.rulemsx.create_dataset("DS_RT_" + r.field("EMSX_SEQUENCE").value() + r.field("EMSX_ROUTE_ID").value())
-    #
-    #    new_dataset.add_datapoint("RouteStatus", self.EMSXFieldDataPointSource(r.field("EMSX_STATUS")))
-    #    new_dataset.add_datapoint("OrderNumber", self.EMSXFieldDataPointSource(r.field("EMSX_SEQUENCE")))
-    #    new_dataset.add_datapoint("RouteID", self.EMSXFieldDataPointSource(r.field("EMSX_ROUTE_ID")))
-    #    new_dataset.add_datapoint("Filled", self.EMSXFieldDataPointSource(r.field("EMSX_FILLED")))
-    #    new_dataset.add_datapoint("PrevFilled", self.GenericIntegerDataPointSource(0))
-    #    new_dataset.add_datapoint("Amount", self.EMSXFieldDataPointSource(r.field("EMSX_AMOUNT")))
-    #
-    #    self.rulemsx.rulesets["demoRouteRuleSet"].execute(new_dataset)
-    #
-    #    #print("Parse Route: " + r.field("EMSX_SEQUENCE").value() + r.field("EMSX_ROUTE_ID").value() + "...done.")
+    def parse_route(self,r):
+        
+        print("Parse Route: " + r.field("EMSX_SEQUENCE").value() + "." + r.field("EMSX_ROUTE_ID").value())
+        
+        new_dataset = self.rulemsx.create_dataset("DS_RT_" + r.field("EMSX_SEQUENCE").value() + "." + r.field("EMSX_ROUTE_ID").value())
+    
+        new_dataset.add_datapoint("RouteStatus", self.EMSXFieldDataPointSource(r.field("EMSX_STATUS")))
+        new_dataset.add_datapoint("RouteOrderNumber", self.EMSXFieldDataPointSource(r.field("EMSX_SEQUENCE")))
+        new_dataset.add_datapoint("RouteID", self.EMSXFieldDataPointSource(r.field("EMSX_ROUTE_ID")))
+        new_dataset.add_datapoint("RouteFilled", self.EMSXFieldDataPointSource(r.field("EMSX_FILLED")))
+        new_dataset.add_datapoint("RouteAmount", self.EMSXFieldDataPointSource(r.field("EMSX_AMOUNT")))
+        new_dataset.add_datapoint("RouteLastShares", self.EMSXFieldDataPointSource(r.field("EMSX_LAST_SHARES")))
+        new_dataset.add_datapoint("HedgeTicker", self.ConstDataPointSource(self.options.ticker))
+        new_dataset.add_datapoint("FillAmount", self.GenericValueDataPointSource(0))
+        new_dataset.add_datapoint("HedgeAmount", self.GenericValueDataPointSource(1))
+        new_dataset.add_datapoint("RouteNotes", self.EMSXFieldDataPointSource(r.field("EMSX_NOTES")))
+        
+        self.rulemsx.rulesets["demoRouteRuleSet"].execute(new_dataset)
+    
 
 
 
