@@ -282,6 +282,12 @@ class RMSXSimpleStockHedgeDemo:
 
             field_source = dataset.datapoints["RouteFilled"].datapoint_source
             
+            # Fills only valid if status at time of fill was either working or partfill. If status was filled, then this is a history fill.
+            status = dataset.datapoints["RouteStatus"].datapoint_source
+            
+            previous_status = status.get_previous_value()
+            
+            
             current_filled =  int(field_source.get_value())
             
             pf = field_source.get_previous_value()
@@ -290,7 +296,9 @@ class RMSXSimpleStockHedgeDemo:
             else:
                 previous_filled = 0
             
-            if current_filled > previous_filled:
+            print("Checking for Route Fill %d/%d: Current=%d Previous=%d PrevStatus:%s" % (current_filled,previous_filled, previous_status))
+            
+            if current_filled > previous_filled and (previous_status == "WORKING" or previous_status == "PARTFILL"):
                 filled_amount = current_filled - previous_filled
                 dataset.datapoints["FillAmount"].datapoint_source.set_value(filled_amount)
                 print("Fill detected: " + str(filled_amount))
