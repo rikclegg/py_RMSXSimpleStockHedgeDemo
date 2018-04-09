@@ -32,7 +32,7 @@ class RMSXSimpleStockHedgeDemo:
         self.easymsx = None
         
         print("Initialising RuleMSX...")
-        self.rulemsx = RuleMSX(logging.CRITICAL)
+        self.rulemsx = RuleMSX(logging.DEBUG)
         print("RuleMSX initialised...")
         
         print("Initialising EasyMKT...")
@@ -269,7 +269,9 @@ class RMSXSimpleStockHedgeDemo:
 
             self.previous_value = self.value
             self.value = notification.field_changes[0].new_value                
-            super().set_stale()
+            if self.previous_value != self.value:
+                print("Value has changed, calling set_stale...")
+                super().set_stale()
      
 
     class RouteFillOccured(RuleEvaluator):
@@ -296,7 +298,7 @@ class RMSXSimpleStockHedgeDemo:
             else:
                 previous_filled = 0
             
-            print("Checking for Route Fill %d/%d: Current=%d Previous=%d PrevStatus:%s" % (current_filled,previous_filled, previous_status))
+            print ("RouteFillOccured test for : " + dataset.datapoints["RouteOrderNumber"].get_value())
             
             if current_filled > previous_filled and (previous_status == "WORKING" or previous_status == "PARTFILL"):
                 filled_amount = current_filled - previous_filled
