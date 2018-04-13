@@ -23,6 +23,14 @@ def parseCommandLine():
     
     return options
 
+def log(msg):
+
+    mytime= datetime.now()
+    s  = mytime.strftime("%Y%m%d%H%M%S%f")
+    print(s + "(RMSXSimpleStockHedgeDemo): \t" + msg)
+
+
+
 
 class RMSXSimpleStockHedgeDemo:
     
@@ -483,13 +491,6 @@ class RMSXSimpleStockHedgeDemo:
         
         self.rulemsx.rulesets["demoRouteRuleSet"].execute(new_dataset)
     
-
-    def log(msg):
-    
-        mytime= datetime.now()
-        s  = mytime.strftime("%Y%m%d%H%M%S%f")
-        print(s + "(RMSXSimpleStockHedgeDemo): \t" + msg)
-
 
 if __name__ == '__main__':
     
