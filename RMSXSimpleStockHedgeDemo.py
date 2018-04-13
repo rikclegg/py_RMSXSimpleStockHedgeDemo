@@ -1,8 +1,8 @@
 # RMSXSimpleStockHedgeDemo.py
 
-import logging
 import argparse
-
+from datetime import datetime
+import logging
 from easymsx.easymsx import EasyMSX
 from easymsx.notification import Notification as EasyMSXNotification
 from easymkt.easymkt import EasyMKT
@@ -23,6 +23,12 @@ def parseCommandLine():
     
     return options
 
+def log(msg):
+    
+    mytime= datetime.now()
+    s = mytime.strftime("%Y%m%d%H%M%S%f")
+    print(s + "(RMSXSimpleStockHedgeDemo): \t" + msg)
+
 
 class RMSXSimpleStockHedgeDemo:
     
@@ -31,27 +37,32 @@ class RMSXSimpleStockHedgeDemo:
         self.options = options
         self.easymsx = None
         
-        print("Initialising RuleMSX...")
+        log("Initialising RuleMSX...")
         self.rulemsx = RuleMSX(logging.CRITICAL)
-        print("RuleMSX initialised...")
+        log("RuleMSX initialised...")
         
-        print("Initialising EasyMKT...")
+        log("Initialising EasyMKT...")
         self.easymkt = EasyMKT()
-        print("EasyMKT initialised...")
+        log("EasyMKT initialised...")
 
-        print("Initialising EasyMSX...")
+        log("Initialising EasyMSX...")
         self.easymsx = EasyMSX()
-        print("EasyMSX initialised...")
+        log("EasyMSX initialised...")
         
-        print("Create RuleSet...")
+        log("Build rules...")
         self.build_rules()
-        print("RuleSet ready...")
+        log("Rules built.")
 
+
+        log("Add order notification handler")
         self.easymsx.orders.add_notification_handler(self.process_notification)
+        log("Add route notification handler")
         self.easymsx.routes.add_notification_handler(self.process_notification)
 
+        log("Starting EasyMSX...")
         self.easymsx.start()
-
+        log("EasyMSX started.")
+        
     class StringEqualityEvaluator(RuleEvaluator):
         
         def __init__(self, datapoint_name, target_value, additional_dep=None):
@@ -378,7 +389,7 @@ class RMSXSimpleStockHedgeDemo:
 
     def build_rules(self):
         
-        print("Building Rules...")
+        log("Building Rules...")
 
         cond_order_status_new = RuleCondition("OrderStatusIsNew", self.StringEqualityEvaluator("OrderStatus","NEW"))
         cond_order_not_hedge = RuleCondition("OrderNotHedge", self.StringInequalityEvaluator("OrderNotes","HEDGE"))
@@ -420,25 +431,25 @@ class RMSXSimpleStockHedgeDemo:
         rule_hedge_order_US.add_rule_condition(cond_route_not_hedge)
         rule_hedge_order_US.add_action(action_send_hedge_order)
 
-        print("Rules built.")
+        log("Rules built.")
 
 
     def process_notification(self,notification):
 
         if notification.category == EasyMSXNotification.NotificationCategory.ORDER:
             if notification.type == EasyMSXNotification.NotificationType.NEW or notification.type == EasyMSXNotification.NotificationType.INITIALPAINT: 
-                print("EasyMSX Notification ORDER -> NEW/INIT_PAINT: " + notification.source.field("EMSX_SEQUENCE").value())
+                log("EasyMSX Notification ORDER -> NEW/INIT_PAINT: " + notification.source.field("EMSX_SEQUENCE").value())
                 self.parse_order(notification.source)
         
         if notification.category == EasyMSXNotification.NotificationCategory.ROUTE:
             if notification.type == EasyMSXNotification.NotificationType.NEW or notification.type == EasyMSXNotification.NotificationType.INITIALPAINT: 
-                print("EasyMSX Notification ROUTE -> NEW/INIT_PAINT: " + notification.source.field("EMSX_SEQUENCE").value() + "/" + notification.source.field("EMSX_ROUTE_ID").value())
+                log("EasyMSX Notification ROUTE -> NEW/INIT_PAINT: " + notification.source.field("EMSX_SEQUENCE").value() + "/" + notification.source.field("EMSX_ROUTE_ID").value())
                 self.parse_route(notification.source)
             
         
     def parse_order(self,o):
         
-        print("Parse Order: " + o.field("EMSX_SEQUENCE").value())
+        log("Parse Order: " + o.field("EMSX_SEQUENCE").value())
 
         new_dataset = self.rulemsx.create_dataset("DS_OR_" + o.field("EMSX_SEQUENCE").value())
 
@@ -451,12 +462,13 @@ class RMSXSimpleStockHedgeDemo:
         new_dataset.add_datapoint("20DayAvgVol", self.GetRefDataField(self.easymkt, o.field("EMSX_TICKER").value(),"VOLUME_AVG_20D"))
         new_dataset.add_datapoint("Exchange", self.GetRefDataField(self.easymkt, o.field("EMSX_TICKER").value(),"EXCH_CODE"))
 
+        log("Executing Ruleset with DataSet " + new_dataset.name)
         self.rulemsx.rulesets["demoOrderRuleSet"].execute(new_dataset)
 
 
     def parse_route(self,r):
         
-        print("Parse Route: " + r.field("EMSX_SEQUENCE").value() + "." + r.field("EMSX_ROUTE_ID").value())
+        log("Parse Route: " + r.field("EMSX_SEQUENCE").value() + "." + r.field("EMSX_ROUTE_ID").value())
         
         new_dataset = self.rulemsx.create_dataset("DS_RT_" + r.field("EMSX_SEQUENCE").value() + "." + r.field("EMSX_ROUTE_ID").value())
     
@@ -471,11 +483,9 @@ class RMSXSimpleStockHedgeDemo:
         new_dataset.add_datapoint("HedgeAmount", self.GenericValueDataPointSource(1))
         new_dataset.add_datapoint("RouteNotes", self.EMSXFieldDataPointSource(r.field("EMSX_NOTES")))
         
+        log("Executing Ruleset with DataSet " + new_dataset.name)
         self.rulemsx.rulesets["demoRouteRuleSet"].execute(new_dataset)
     
-
-
-
 if __name__ == '__main__':
     
     options=parseCommandLine()
@@ -484,7 +494,7 @@ if __name__ == '__main__':
     
     input("Press any to terminate\n")
 
-    print("Terminating...\n")
+    log("Terminating...")
 
     RMSXSimpleStockHedgeDemo.rulemsx.stop()
     
