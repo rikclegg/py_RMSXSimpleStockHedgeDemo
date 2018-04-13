@@ -2,7 +2,7 @@
 
 import logging
 import argparse
-
+from datetime import datetime
 from easymsx.easymsx import EasyMSX
 from easymsx.notification import Notification as EasyMSXNotification
 from easymkt.easymkt import EasyMKT
@@ -484,6 +484,11 @@ class RMSXSimpleStockHedgeDemo:
         self.rulemsx.rulesets["demoRouteRuleSet"].execute(new_dataset)
     
 
+    def log(msg):
+    
+        mytime= datetime.now()
+        s  = mytime.strftime("%Y%m%d%H%M%S%f")
+        print(s + "(RMSXSimpleStockHedgeDemo): \t" + msg)
 
 
 if __name__ == '__main__':
